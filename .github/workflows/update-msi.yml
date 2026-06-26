@@ -1,0 +1,34 @@
+name: Update Maritime Safety Data
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-msi:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Fetch NGA MSI broadcast warnings
+        run: |
+          mkdir -p data
+          curl -s --max-time 30 \
+            -H "User-Agent: Mozilla/5.0" \
+            -H "Accept: application/json" \
+            "https://msi.nga.mil/api/publications/broadcast-warn?output=json" \
+            -o data/msi.json
+          python3 -c "import json; d=json.load(open('data/msi.json')); print(len(d.get('broadcast-warn',[])), 'items')"
+
+      - name: Commit and push if changed
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git add data/msi.json
+          git diff --staged --quiet || git commit -m "Update MSI data $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push

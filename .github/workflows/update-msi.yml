@@ -1,3 +1,4 @@
+# .github/workflows/update-msi.yml
 name: Update Maritime Safety Data
 
 on:
@@ -11,6 +12,7 @@ permissions:
 jobs:
   update-msi:
     runs-on: ubuntu-latest
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -18,17 +20,42 @@ jobs:
       - name: Fetch NGA MSI broadcast warnings
         run: |
           mkdir -p data
-          curl -s --max-time 30 \
-            -H "User-Agent: Mozilla/5.0" \
-            -H "Accept: application/json" \
-            "https://msi.nga.mil/api/publications/broadcast-warn?output=json" \
-            -o data/msi.json
-          python3 -c "import json; d=json.load(open('data/msi.json')); print(len(d.get('broadcast-warn',[])), 'items')"
 
-      - name: Commit and push if changed
+          echo "Fetching NGA MSI data..."
+          curl -s --max-time 45 \
+            -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36" \
+            -H "Accept: application/json, */*" \
+            -H "Referer: https://msi.nga.mil/" \
+            "https://msi.nga.mil/api/publications/broadcast-warn?output=json" \
+            -o data/msi_new.json || true
+
+          BYTES=$(wc -c < data/msi_new.json 2>/dev/null || echo 0)
+          echo "Received ${BYTES} bytes"
+
+          if python3 -c "
+          import json, sys
+          d = json.load(open('data/msi_new.json'))
+          items = d.get('broadcast-warn', [])
+          print(f'Items: {len(items)}')
+          assert len(items) > 0, 'Empty result'
+          " 2>/dev/null; then
+            echo "Valid MSI data — moving to data/msi.json"
+            mv data/msi_new.json data/msi.json
+          else
+            echo "WARNING: NGA MSI returned invalid or empty data. Keeping existing data/msi.json."
+            head -c 500 data/msi_new.json || true
+            rm -f data/msi_new.json
+            [ -f data/msi.json ] || echo '{"broadcast-warn":[]}' > data/msi.json
+          fi
+
+      - name: Commit and push if data changed
         run: |
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
           git add data/msi.json
-          git diff --staged --quiet || git commit -m "Update MSI data $(date -u '+%Y-%m-%d %H:%M UTC')"
-          git push
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Update MSI data — $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push
+          fi

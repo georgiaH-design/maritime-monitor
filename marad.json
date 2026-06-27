@@ -1,0 +1,55 @@
+{
+  "fetched": "2026-06-26T00:00:00Z",
+  "alerts": [],
+  "advisories": [
+    {
+      "title": "2026-008-Global-U.S. Maritime Advisory Updates, Resources, and Contacts",
+      "url": "https://www.maritime.dot.gov/msci/2026-008-global-us-maritime-advisory-updates-resources-and-contacts",
+      "status": "Active",
+      "effective": "04/24/2026",
+      "expires": "10/21/2026"
+    },
+    {
+      "title": "2026-007-Worldwide-Worldwide-Foreign Adversarial Technological, Physical, and Cyber Influence",
+      "url": "https://www.maritime.dot.gov/msci/2026-007-worldwide-worldwide-foreign-adversarial-technological-physical-and-cyber-influence",
+      "status": "Active",
+      "effective": "04/24/2026",
+      "expires": "10/21/2026"
+    },
+    {
+      "title": "2026-006-Red Sea, Bab el Mandeb Strait, Gulf of Aden, Arabian Sea, and Somali Basin-Houthi Attacks on Commercial Vessels",
+      "url": "https://www.maritime.dot.gov/msci/2026-006-red-sea-bab-el-mandeb-strait-gulf-aden-arabian-sea-and-somali-basin-houthi-attacks",
+      "status": "Active",
+      "effective": "03/26/2026",
+      "expires": "09/22/2026"
+    },
+    {
+      "title": "2026-005-Black Sea and Sea of Azov-Military Combat Operations",
+      "url": "https://www.maritime.dot.gov/msci/2026-005-black-sea-and-sea-azov-military-combat-operations",
+      "status": "Active",
+      "effective": "03/19/2026",
+      "expires": "09/15/2026"
+    },
+    {
+      "title": "2026-004-Persian Gulf, Strait of Hormuz, and Gulf of Oman-Iranian Attacks on Commercial Vessels",
+      "url": "https://www.maritime.dot.gov/msci/2026-004-persian-gulf-strait-hormuz-and-gulf-oman-iranian-attacks-commercial-vessels",
+      "status": "Active",
+      "effective": "03/13/2026",
+      "expires": "09/09/2026"
+    },
+    {
+      "title": "2026-002-Gulf of Aden, Arabian Sea, Indian Ocean-Piracy/Armed Robbery/Kidnapping for Ransom",
+      "url": "https://www.maritime.dot.gov/msci/2026-002-gulf-aden-arabian-sea-indian-ocean-piracyarmed-robberykidnapping-ransom",
+      "status": "Active",
+      "effective": "02/09/2026",
+      "expires": "08/08/2026"
+    },
+    {
+      "title": "2025-015-Gulf of Guinea-Piracy/Armed Robbery/Kidnapping for Ransom",
+      "url": "https://www.maritime.dot.gov/msci/2025-015-gulf-guinea-piracyarmed-robberykidnapping-ransom",
+      "status": "Active",
+      "effective": "12/15/2025",
+      "expires": "06/13/2026"
+    }
+  ]
+}

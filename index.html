@@ -49,6 +49,11 @@
     .mil { background:#2a1800; color:#e09040; border:1px solid #4a2800; }
     .ops { background:#002030; color:#40b8c8; border:1px solid #004050; }
     .jam { background:#2a2000; color:#ffe040; border:1px solid #504000; }
+    .dst { background:#5a0010; color:#ff4060; border:1px solid #900020; }
+    .sca { background:#1e0038; color:#c87eff; border:1px solid #4a0088; }
+    .marad-alert { background:#4a0018; color:#ff7090; border:1px solid #8a0030; }
+    .marad-adv  { background:#2a1000; color:#ff9040; border:1px solid #5a2000; }
+    .dtime { display:block; color:#ff6070; font-size:11px; font-weight:700; margin-top:4px; letter-spacing:.3px; }
 
     .msg { padding:14px 12px; font-size:12px; color:#2e5878; font-style:italic; }
     .src-err { padding:8px 12px; font-size:10px; color:#5a4030; background:#180f00; border-bottom:1px solid #0f1e30; }
@@ -98,14 +103,28 @@
       <div class="sec-hd"><h2>⚙️ Marine Operations</h2><span class="cnt" id="cnt-ops">—</span></div>
       <div class="sec-bd" id="list-ops"><div class="msg">Loading…</div></div>
     </div>
+    <div class="sec" style="flex:1.2">
+      <div class="sec-hd" style="background:#140026;border-bottom-color:#2a0050;">
+        <h2 style="color:#c87eff;">⛵ Small Craft &amp; NOAA Advisories</h2>
+        <span class="cnt" id="cnt-sca" style="background:#1e0038;color:#c87eff;">—</span>
+      </div>
+      <div class="sec-bd" id="list-sca"><div class="msg">Loading…</div></div>
+    </div>
     <div class="sec" style="flex:1">
       <div class="sec-hd"><h2>📢 General Notices</h2><span class="cnt" id="cnt-gen">—</span></div>
       <div class="sec-bd" id="list-gen"><div class="msg">Loading…</div></div>
     </div>
+    <div class="sec" style="flex:1.5">
+      <div class="sec-hd" style="background:#1a0008;border-bottom-color:#3a0018;">
+        <h2 style="color:#ff7090;">🔴 MARAD Security Alerts &amp; Advisories</h2>
+        <span class="cnt" id="cnt-marad" style="background:#2a0010;color:#ff7090;">—</span>
+      </div>
+      <div class="sec-bd" id="list-marad"><div class="msg">Loading…</div></div>
+    </div>
   </div>
 </div>
 <footer>
-  <span>Sources: NGA MSI · NOAA NHC · NWS · USGS · GDACS · GPSJam/EASA (interference zones) | Situational awareness only — not for navigation</span>
+  <span>Sources: NGA MSI · NOAA NHC · NWS · USGS · GDACS · MARAD MSCI · GPSJam/EASA (interference zones) | Situational awareness only — not for navigation</span>
   <span id="total">Loading…</span>
 </footer>
 
@@ -115,7 +134,8 @@
 'use strict';
 
 // Path to the MSI data file — served from the same GitHub Pages repo
-const MSI_DATA_URL = 'https://georgiah-design.github.io/maritime-monitor/data/msi.json';
+const MSI_DATA_URL  = 'https://georgiah-design.github.io/maritime-monitor/data/msi.json';
+const MARAD_DATA_URL = 'https://georgiah-design.github.io/maritime-monitor/data/marad.json';
 
 const map = L.map('map',{center:[20,0],zoom:2});
 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
@@ -234,6 +254,56 @@ function addError(listId, msg){
   el.appendChild(d);
 }
 
+// ── Date utilities ────────────────────────────────────────────────────────
+const MIN_DATE_MS  = 1262304000000;           // 01 Jan 2010 — bogus threshold
+const CUTOFF_90D   = ()=>Date.now()-(90*24*60*60*1000); // 90 days ago
+const CUTOFF_48H   = ()=>Date.now()-(48*60*60*1000);    // 48 hours ago
+const MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MO_IDX = {JAN:0,FEB:1,MAR:2,APR:3,MAY:4,JUN:5,JUL:6,AUG:7,SEP:8,OCT:9,NOV:10,DEC:11};
+
+function fmtDt(dt){
+  if(!dt||isNaN(dt.getTime())||dt.getTime()<MIN_DATE_MS) return '';
+  const d=dt.getUTCDate().toString().padStart(2,'0');
+  const h=dt.getUTCHours().toString().padStart(2,'0');
+  const mn=dt.getUTCMinutes().toString().padStart(2,'0');
+  return `${d} ${MO[dt.getUTCMonth()]} ${dt.getUTCFullYear()} ${h}:${mn} UTC`;
+}
+
+function fmtDate(val){
+  if(!val) return '';
+  // Direct parse (ISO 8601, RFC 2822, etc.)
+  let r=fmtDt(new Date(val));
+  if(r) return r;
+  // Numeric: try epoch ms (large) then epoch s (smaller)
+  const n=parseInt(val);
+  if(!isNaN(n)&&n>0){
+    if(n>MIN_DATE_MS)       r=fmtDt(new Date(n));
+    else if(n*1000>MIN_DATE_MS) r=fmtDt(new Date(n*1000));
+  }
+  return r||'';
+}
+
+// Extract date/time from NAVTEX message text (most reliable source for NGA MSI)
+// Handles: "211123Z APR 25", "21 APR 2025", "21 APR 25"
+function navtexDate(text, msgYear){
+  const t=text||'';
+  const yr=msgYear?parseInt(msgYear):new Date().getUTCFullYear();
+  // NAVTEX DTG: DDHHMM[Z] MON [YY|YYYY]
+  const m1=t.match(/\b(\d{2})(\d{2})(\d{2})[Zz]?\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(?:\s+(\d{2,4}))?/i);
+  if(m1){
+    let y=m1[5]?parseInt(m1[5]):yr;
+    if(y<100) y+=2000;
+    return fmtDt(new Date(Date.UTC(y,MO_IDX[m1[4].toUpperCase()],parseInt(m1[1]),parseInt(m1[2]),parseInt(m1[3]))));
+  }
+  // DD MON YYYY or DD MON YY
+  const m2=t.match(/\b(\d{1,2})\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+(\d{2,4})\b/i);
+  if(m2){
+    let y=parseInt(m2[3]); if(y<100) y+=2000;
+    return fmtDt(new Date(Date.UTC(y,MO_IDX[m2[2].toUpperCase()],parseInt(m2[1]))));
+  }
+  return '';
+}
+
 // ── Coordinate extractor for NAVTEX-style text ────────────────────────────
 function coord(text){
   const p=/(\d{1,3})[°\-](\d{2}(?:\.\d+)?)['’]?\s*([NS])[,.\s]+(\d{1,3})[°\-](\d{2}(?:\.\d+)?)['’]?\s*([EW])/i;
@@ -272,32 +342,93 @@ async function loadMSI(){
     const items=data['broadcast-warn']||[];
     if(!items.length) throw new Error('No items in response');
 
+    const cutoff90=CUTOFF_90D();
+    const cutoff48=CUTOFF_48H();
+    const NOW=Date.now();
+    const CUR_YEAR=new Date().getUTCFullYear();
+
+    function isDistress(t){
+      return /DISTRESS|MEDICAL\s+(ASSIST|EMERGENCY|EVAC)|MAYDAY|PAN[\s-]PAN|PERSON\s+OVERBOARD|MAN\s+OVERBOARD|VESSEL\s+IN\s+DISTRESS|MISSING\s+(VESSEL|CREW|PERSON|MIGRANT|BOAT)|ABANDON(ED)?\s+(SHIP|VESSEL)|CAPSIZ|CREW(MAN)?\s+(REQUIR|NEED).*(MEDICAL|ASSIST)|SAR\s+(OPERATION|CASE)|MEDEVAC|\bPOB\b|LKP\b|LAST\s+KNOWN\s+POS|MIGRANT\s+(BOAT|VESSEL|CRAFT)|REFUGEE\s+(BOAT|VESSEL)|RUBBER\s+(DINGHY|BOAT)|WOODEN\s+BOAT|REPORT\s+REQUESTED|MRCC\s+\w+\s+REQUESTS?|SIGHTING\s+REPORT|PERSONS?\s+IN\s+DISTRESS/.test((t||'').toUpperCase());
+    }
+
+    // Returns a reliable ms timestamp from text + year, or 0 if unknown
+    function getBestMs(text, msgYear){
+      const yr = msgYear ? parseInt(msgYear) : CUR_YEAR;
+      // Fast-reject: message year is too old
+      if(yr < CUR_YEAR - 1) return -1; // definitely > 30 days old
+      if(yr < CUR_YEAR)     return -1; // previous year is always > 30d
+
+      const t = text || '';
+      // NAVTEX DTG: DDHHMM[Z] MON [YY|YYYY]
+      const m1 = t.match(/\b(\d{2})(\d{2})(\d{2})[Zz]?\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(?:\s+(\d{2,4}))?/i);
+      if(m1){
+        let y = m1[5] ? parseInt(m1[5]) : yr;
+        if(y < 100) y += 2000;
+        const ms = Date.UTC(y, MO_IDX[m1[4].toUpperCase()], +m1[1], +m1[2], +m1[3]);
+        if(ms > MIN_DATE_MS) return ms;
+      }
+      // DD MON YYYY
+      const m2 = t.match(/\b(\d{1,2})\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+(\d{2,4})\b/i);
+      if(m2){
+        let y = parseInt(m2[3]); if(y < 100) y += 2000;
+        const ms = Date.UTC(y, MO_IDX[m2[2].toUpperCase()], +m2[1]);
+        if(ms > MIN_DATE_MS) return ms;
+      }
+      // No parseable date in text — use Jan 1 of msgYear as conservative estimate
+      if(yr >= CUR_YEAR) return Date.UTC(yr, 0, 1); // current year: allow through tentatively
+      return -1;
+    }
+
     items.forEach(w=>{
-      const text=(w.text||'').trim();
-      const navA=w.navArea?`NAVAREA ${w.navArea}`:'';
-      const sub=w.subregion||'';
-      const num=w.msgNumber?`#${w.msgYear}/${w.msgNumber}`:'';
-      const title=[navA,sub,num].filter(Boolean).join(' · ')||'Maritime Warning';
-      const date=w.issueDate?new Date(w.issueDate).toUTCString().slice(0,16)+' UTC':'';
-      const c=coord(text);
-      const cat=classify(text);
+      const text = (w.text||'').trim();
+      const itemMs = getBestMs(text, w.msgYear);
+
+      // Hard filter: -1 means definitely too old; also filter by cutoffs
+      if(itemMs === -1) return;
+      if(itemMs > 0 && itemMs < MIN_DATE_MS) return;          // bogus date
+      if(isDistress(text) && itemMs > 0 && itemMs < cutoff48) return; // distress: 48h
+      if(itemMs > 0 && itemMs < cutoff90) return;             // all others: 90d
+
+      // Build display date from NAVTEX text (most reliable) then API field
+      const rawDate = w.issueDate||w.cancelDate||w.broadcastDate||'';
+      const date = (itemMs > MIN_DATE_MS ? fmtDt(new Date(itemMs)) : '') || fmtDate(rawDate) || (w.msgYear ? `${w.msgYear} (time unknown)` : '');
+
+      const navA = w.navArea ? `NAVAREA ${w.navArea}` : '';
+      const sub  = w.subregion||'';
+      const num  = w.msgNumber ? `#${w.msgYear}/${w.msgNumber}` : '';
+      const title = [navA,sub,num].filter(Boolean).join(' · ') || 'Maritime Warning';
+      const c = coord(text);
+      const cat = classify(text);
+      const distress = isDistress(text);
 
       let listId,bCls,bLbl,mEmoji,mHex;
-      if(cat==='gps'){      listId='list-gps'; bCls='gps'; bLbl='GPS/NAV';  mEmoji='📡'; mHex='#008090'; gps++; }
-      else if(cat==='hazard'){listId='list-haz'; bCls='haz'; bLbl='HAZARD';   mEmoji='🚨'; mHex='#b03000'; haz++; }
+      if(cat==='gps'){       listId='list-gps'; bCls='gps'; bLbl='GPS/NAV';  mEmoji='📡'; mHex='#008090'; gps++; }
+      else if(cat==='hazard'){
+        listId='list-haz'; mEmoji='🚨'; mHex=distress?'#c00020':'#b03000'; haz++;
+        bCls=distress?'dst':'haz'; bLbl=distress?'DISTRESS':'HAZARD';
+      }
       else{
-        const sub=classifyGen(text);
-        if(sub==='mil'){      listId='list-mil'; bCls='mil'; bLbl='MILITARY'; mEmoji='🎯'; mHex='#207040'; mil++; }
-        else if(sub==='ops'){ listId='list-ops'; bCls='ops'; bLbl='OPS';      mEmoji='⚙️'; mHex='#005060'; ops++; }
+        const sg=classifyGen(text);
+        if(sg==='mil'){       listId='list-mil'; bCls='mil'; bLbl='MILITARY'; mEmoji='🎯'; mHex='#207040'; mil++; }
+        else if(sg==='ops'){  listId='list-ops'; bCls='ops'; bLbl='OPS';      mEmoji='⚙️'; mHex='#005060'; ops++; }
         else{                 listId='list-gen'; bCls='wrn'; bLbl='NAVWARN';  mEmoji='⚠️'; mHex='#806010'; gen++; }
       }
+
+      const timeDisplay = distress && date
+        ? `<span class="dtime">🕐 Issued: ${date}</span>`
+        : (date ? `Issued: ${date}` : 'Date unknown');
 
       let mk=null;
       if(c){
         mk=L.marker(c,{icon:mkIcon(mEmoji,mHex)}).addTo(map);
-        mk.bindPopup(`<div class="pt">${mEmoji} ${title}</div><div class="pb">${text.substring(0,500)}${text.length>500?'…':''}</div>${date?`<div class="pm">Issued: ${date}</div>`:''}`);
+        mk.bindPopup(
+          `<div class="pt">${mEmoji} ${title}</div>`+
+          `<div class="pb">${text.substring(0,500)}${text.length>500?'…':''}</div>`+
+          `<div class="pm" style="${distress?'color:#ff6070;font-weight:700;':''}">`+
+          `🕐 Issued: ${date||'Unknown'}</div>`
+        );
       }
-      addCard(listId,`<span class="badge ${bCls}">${bLbl}</span>`,title,text,date,c?()=>{fly(c[0],c[1],6);mk.openPopup();}:null);
+      addCard(listId,`<span class="badge ${bCls}">${bLbl}</span>`,title,text,timeDisplay,c?()=>{fly(c[0],c[1],6);mk.openPopup();}:null);
     });
 
     setCount('cnt-haz',haz); setCount('cnt-gps',gps); setCount('cnt-mil',mil); setCount('cnt-ops',ops); setCount('cnt-gen',gen);
@@ -326,56 +457,112 @@ async function loadNWS(){
     const data=await r.json();
     const alerts=(data.features||[]);
 
-    // Only show genuine marine hazards (not routine advisories)
-    const priority=['Tsunami Warning','Tsunami Watch','Tsunami Advisory',
+    // All active marine / weather alerts worth showing
+    const priority=[
+      'Tsunami Warning','Tsunami Watch','Tsunami Advisory',
       'Special Marine Warning','Gale Warning','Storm Warning','Hurricane Warning',
       'Tropical Storm Warning','Marine Weather Statement','Hazardous Seas',
-      'Dense Fog Advisory','Small Craft Advisory'];
+      'Dense Fog Advisory','Small Craft Advisory',
+      'Small Craft Advisory for Hazardous Seas',
+      'Small Craft Advisory for Rough Bar',
+      'Small Craft Advisory for Winds',
+      'Brisk Wind Advisory',
+      'Wind Advisory',
+      'Coastal Flood Advisory','Coastal Flood Watch','Coastal Flood Warning',
+      'High Surf Advisory','High Surf Warning',
+      'Rip Current Statement',
+      'Lake Wind Advisory',
+      'Extreme Wind Warning'
+    ];
 
-    const filtered=alerts.filter(f=>priority.includes(f.properties.event));
+    const c90=CUTOFF_90D();
+    const filtered=alerts.filter(f=>{
+      if(!priority.includes(f.properties.event)) return false;
+      const t=new Date(f.properties.sent||f.properties.effective||f.properties.onset||'').getTime();
+      if(t>0 && t<c90) return false; // older than 90 days
+      return true;
+    });
 
-    filtered.forEach(f=>{
+    for(const f of filtered){
       const p=f.properties;
       const event=p.event||'Marine Alert';
       const area=p.areaDesc||'';
       const desc=(p.description||p.headline||'').trim();
-      const expires=p.expires?new Date(p.expires).toUTCString().slice(0,16)+' UTC':'';
+      const issued=fmtDate(p.sent||p.effective||p.onset||'');
+      const expires=fmtDate(p.expires||'');
+      const timeLabel=issued?`Issued: ${issued}`+(expires?` · Expires: ${expires}`:''):(expires?`Expires: ${expires}`:'');
 
-      const isTsunami=/tsunami/i.test(event);
-      const isGale=/gale|storm\s+warning|hurricane|tropical/i.test(event);
-      const isFog=/fog|visibility/i.test(event);
-      const bCls=isTsunami?'red':isGale?'haz':'nws';
-      const bLbl=isTsunami?'TSUNAMI':isGale?'GALE/STORM':'MARINE';
-      const mHex=isTsunami?'#c00020':isGale?'#b04000':'#7000b0';
-      const mEmoji=isTsunami?'🌊':isGale?'🌬️':'📋';
+      const isTsunami  = /tsunami/i.test(event);
+      const isGale     = /gale|storm\s+warning|hurricane|tropical/i.test(event);
+      const isSmallCraft = /small\s+craft|brisk\s+wind|wind\s+advisory|lake\s+wind/i.test(event);
+      const isCoastal  = /coastal\s+flood|high\s+surf|rip\s+current|extreme\s+wind/i.test(event);
+      const isFog      = /fog/i.test(event);
 
-      // Geometry: NWS returns polygon or point
+      let bCls,bLbl,mHex,mEmoji;
+      if(isTsunami){
+        bCls='red';  bLbl='TSUNAMI';    mHex='#c00020'; mEmoji='🌊';
+      } else if(isGale){
+        bCls='haz';  bLbl='GALE/STORM'; mHex='#b04000'; mEmoji='🌬️';
+      } else if(isSmallCraft){
+        bCls='sca';  bLbl='SMALL CRAFT'; mHex='#7b2fff'; mEmoji='⛵';
+      } else if(isCoastal){
+        bCls='sca';  bLbl='COASTAL';    mHex='#7b2fff'; mEmoji='🌊';
+      } else if(isFog){
+        bCls='sca';  bLbl='FOG/VIS';    mHex='#7b2fff'; mEmoji='🌫️';
+      } else {
+        bCls='nws';  bLbl='MARINE';     mHex='#7000b0'; mEmoji='📋';
+      }
+
+      // Geometry: NWS sometimes omits geometry for zone-based alerts.
+      // Fall back to zone centroid lookup via NWS zones API.
       let lat=null,lon=null;
       const geo=f.geometry;
       if(geo){
         if(geo.type==='Point'){ lon=geo.coordinates[0]; lat=geo.coordinates[1]; }
         else if(geo.type==='Polygon'||geo.type==='MultiPolygon'){
-          // Use centroid of first ring
           const ring=geo.type==='Polygon'?geo.coordinates[0]:geo.coordinates[0][0];
           const lats=ring.map(c=>c[1]), lons=ring.map(c=>c[0]);
           lat=lats.reduce((a,b)=>a+b,0)/lats.length;
           lon=lons.reduce((a,b)=>a+b,0)/lons.length;
         }
       }
+      // If no geometry, try to get centroid from the first affected zone
+      if(lat===null && p.geocode && p.geocode.UGC && p.geocode.UGC.length){
+        try{
+          const zoneId=p.geocode.UGC[0];
+          const zr=await fetchTimeout(`https://api.weather.gov/zones/forecast/${zoneId}`,5000);
+          if(zr.ok){
+            const zd=await zr.json();
+            const zg=zd.geometry;
+            if(zg&&zg.type==='Polygon'){
+              const ring=zg.coordinates[0];
+              const lats=ring.map(c=>c[1]),lons=ring.map(c=>c[0]);
+              lat=lats.reduce((a,b)=>a+b,0)/lats.length;
+              lon=lons.reduce((a,b)=>a+b,0)/lons.length;
+            }
+          }
+        }catch(_){}
+      }
 
+      const listId = isTsunami||isGale ? 'list-haz'
+                   : isSmallCraft||isCoastal||isFog ? 'list-sca'
+                   : 'list-gen';
       let mk=null;
-      const listId=isTsunami||isGale?'list-haz':'list-gen';
       if(lat!==null){
         mk=L.marker([lat,lon],{icon:mkIcon(mEmoji,mHex)}).addTo(map);
-        mk.bindPopup(`<div class="pt">${mEmoji} ${event}</div><div class="pb">${area}\n\n${desc.substring(0,400)}</div>${expires?`<div class="pm">Expires: ${expires}</div>`:''}`);
+        mk.bindPopup(`<div class="pt">${mEmoji} ${event}</div><div class="pb">${area}\n\n${desc.substring(0,400)}</div>${timeLabel?`<div class="pm">🕐 ${timeLabel}</div>`:''}`);
       }
-      addCard(listId,`<span class="badge ${bCls}">${bLbl}</span>`,`${event} — ${area}`,desc,expires,lat!==null?()=>{fly(lat,lon,5);mk.openPopup();}:null);
+      addCard(listId,`<span class="badge ${bCls}">${bLbl}</span>`,`${event} — ${area}`,desc,timeLabel||'Time unknown',lat!==null?()=>{fly(lat,lon,5);mk.openPopup();}:null);
       count++;
-    });
+    }
 
-    // Add to hazard/general counts
-    setCount('cnt-haz', (parseInt(document.getElementById('cnt-haz').textContent)||0)+
-      filtered.filter(f=>/tsunami|gale|storm\s+warning|hurricane/i.test(f.properties.event)).length);
+    // Update section counts
+    const hazN=filtered.filter(f=>/tsunami|gale|storm\s+warning|hurricane|tropical/i.test(f.properties.event)).length;
+    const scaN=filtered.filter(f=>/small\s+craft|brisk\s+wind|wind\s+advisory|lake\s+wind|coastal\s+flood|high\s+surf|rip\s+current|extreme\s+wind|fog/i.test(f.properties.event)).length;
+    setCount('cnt-haz',(parseInt(document.getElementById('cnt-haz').textContent)||0)+hazN);
+    setCount('cnt-sca',(parseInt(document.getElementById('cnt-sca').textContent)||0)+scaN);
+    if(!document.getElementById('list-sca').querySelector('.card'))
+      document.getElementById('list-sca').innerHTML='<div class="msg">No active small craft or coastal advisories.</div>';
     return count;
   } catch(e){
     console.warn('NWS:',e.message);
@@ -390,13 +577,15 @@ async function loadUSGS(){
   try {
     const r=await fetchTimeout('https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=5.0&orderby=time&limit=40',10000);
     const data=await r.json();
+    const c30=CUTOFF_90D();
     (data.features||[]).forEach(f=>{
       const p=f.properties;
+      if(p.time && p.time<c30) return; // older than 30 days
       const mag=p.mag?.toFixed(1)||'?';
       const place=p.place||'Unknown location';
       const title=`M${mag} — ${place}`;
       const alert=p.alert||'';
-      const time=new Date(p.time).toUTCString().slice(0,16)+' UTC';
+      const time=fmtDate(new Date(p.time).toISOString())||'Time unknown';
       const coords=f.geometry?.coordinates;
       const lat=coords?.[1], lon=coords?.[0];
 
@@ -406,9 +595,9 @@ async function loadUSGS(){
       let mk=null;
       if(lat!==undefined){
         mk=L.marker([lat,lon],{icon:mkIcon('🌊',p.mag>=7?'#c00020':p.mag>=6?'#b05000':'#806800')}).addTo(map);
-        mk.bindPopup(`<div class="pt">🌊 ${title}</div><div class="pb">Magnitude: ${mag}\nDepth: ${(coords[2]||0).toFixed(0)} km</div><div class="pm">Tsunami alert: ${alert||'none'} · ${time}</div>`);
+        mk.bindPopup(`<div class="pt">🌊 ${title}</div><div class="pb">Magnitude: ${mag}\nDepth: ${(coords[2]||0).toFixed(0)} km\nTsunami alert: ${alert||'none'}</div><div class="pm">🕐 Event time: ${time}</div>`);
       }
-      addCard('list-haz',`<span class="badge ${bCls}">${severity}</span>`,title,`Depth: ${(coords?.[2]||0).toFixed(0)} km · Tsunami: ${alert||'no alert'}`,time,lat!==undefined?()=>{fly(lat,lon,6);mk.openPopup();}:null);
+      addCard('list-haz',`<span class="badge ${bCls}">${severity}</span>`,title,`Depth: ${(coords?.[2]||0).toFixed(0)} km · Tsunami: ${alert||'no alert'}`,`Event: ${time}`,lat!==undefined?()=>{fly(lat,lon,6);mk.openPopup();}:null);
       count++;
     });
     setCount('cnt-haz',(parseInt(document.getElementById('cnt-haz').textContent)||0)+count);
@@ -423,6 +612,7 @@ async function loadUSGS(){
 // ── 4. Tropical Cyclones — NHC RSS (direct CORS) ─────────────────────────
 async function loadNHC(){
   let count=0;
+  const c30=CUTOFF_90D();
   const feeds=['https://www.nhc.noaa.gov/index-at.xml','https://www.nhc.noaa.gov/index-ep.xml','https://www.nhc.noaa.gov/index-cp.xml'];
   for(const url of feeds){
     try{
@@ -433,15 +623,20 @@ async function loadNHC(){
       for(const item of items){
         const title=item.querySelector('title')?.textContent||'';
         if(!/(tropical\s+(storm|depression|cyclone)|hurricane|typhoon)/i.test(title)) continue;
+        const rawPub=item.querySelector('pubDate')?.textContent||'';
+        const pubMs=new Date(rawPub).getTime();
+        if(pubMs>0 && pubMs<c30) continue; // older than 30 days
         const desc=(item.querySelector('description')?.textContent||'').replace(/<[^>]+>/g,'').trim();
         const latEl=parseFloat(item.querySelector('lat')?.textContent||'');
         const lonEl=parseFloat(item.querySelector('long')?.textContent||'');
         const lat=isFinite(latEl)?latEl:null, lon=isFinite(lonEl)?lonEl:null;
+        const pubDate=fmtDate(rawPub);
         const isHurr=/hurricane/i.test(title);
         const bCls=isHurr?'red':'org'; const bLbl=isHurr?'HURRICANE':'T.STORM';
+        const tcTime=pubDate?`Issued: ${pubDate}`:'Time unknown';
         let mk=null;
-        if(lat!==null){ mk=L.marker([lat,lon],{icon:mkIcon('🌀',isHurr?'#b00030':'#a05000')}).addTo(map); mk.bindPopup(`<div class="pt">🌀 ${title}</div><div class="pb">${desc.substring(0,400)}</div>`); }
-        addCard('list-tc',`<span class="badge tc">TC</span><span class="badge ${bCls}">${bLbl}</span>`,title,desc,'',lat!==null?()=>{fly(lat,lon,5);mk.openPopup();}:null);
+        if(lat!==null){ mk=L.marker([lat,lon],{icon:mkIcon('🌀',isHurr?'#b00030':'#a05000')}).addTo(map); mk.bindPopup(`<div class="pt">🌀 ${title}</div><div class="pb">${desc.substring(0,400)}</div><div class="pm">🕐 ${tcTime}</div>`); }
+        addCard('list-tc',`<span class="badge tc">TC</span><span class="badge ${bCls}">${bLbl}</span>`,title,desc,tcTime,lat!==null?()=>{fly(lat,lon,5);mk.openPopup();}:null);
         count++;
       }
     }catch(_){}
@@ -454,6 +649,9 @@ async function loadNHC(){
       const xml=new DOMParser().parseFromString(txt,'text/xml');
       const items=Array.from(xml.querySelectorAll('item'));
       for(const item of items){
+        const rawPub=item.querySelector('pubDate')?.textContent||'';
+        const pubMs=new Date(rawPub).getTime();
+        if(pubMs>0 && pubMs<c30) continue; // older than 30 days
         const title=item.querySelector('title')?.textContent||'Cyclone';
         const desc=(item.querySelector('description')?.textContent||'').replace(/<[^>]+>/g,'').trim();
         const gp=(item.querySelector('point')?.textContent||'').trim().split(/\s+/).map(Number);
@@ -461,9 +659,10 @@ async function loadNHC(){
         const alert=(item.querySelector('alertlevel')?.textContent||'').toLowerCase();
         const bCls=alert==='red'?'red':alert==='orange'?'org':'grn';
         const bLbl=(alert||'active').toUpperCase();
+        const gdTime=fmtDate(rawPub)?`Issued: ${fmtDate(rawPub)}`:'Time unknown';
         let mk=null;
-        if(lat!==null){ mk=L.marker([lat,lon],{icon:mkIcon('🌀',alert==='red'?'#b00030':'#500090')}).addTo(map); mk.bindPopup(`<div class="pt">🌀 ${title}</div><div class="pb">${desc.substring(0,400)}</div>`); }
-        addCard('list-tc',`<span class="badge tc">TC</span><span class="badge ${bCls}">${bLbl}</span>`,title,desc,'',lat!==null?()=>{fly(lat,lon,5);mk.openPopup();}:null);
+        if(lat!==null){ mk=L.marker([lat,lon],{icon:mkIcon('🌀',alert==='red'?'#b00030':'#500090')}).addTo(map); mk.bindPopup(`<div class="pt">🌀 ${title}</div><div class="pb">${desc.substring(0,400)}</div><div class="pm">🕐 ${gdTime}</div>`); }
+        addCard('list-tc',`<span class="badge tc">TC</span><span class="badge ${bCls}">${bLbl}</span>`,title,desc,gdTime,lat!==null?()=>{fly(lat,lon,5);mk.openPopup();}:null);
         count++;
       }
     }
@@ -471,17 +670,209 @@ async function loadNHC(){
   return count;
 }
 
+// ── 5. MRCC / SAR Distress Alerts — GDACS General RSS + IMREF ────────────
+// GDACS general RSS includes maritime SAR, floods, and other events.
+// We filter for maritime SAR / missing vessel / migrant boat items.
+async function loadSAR(){
+  let count=0;
+  const c48=CUTOFF_48H();
+  const SARkw=/SAR|DISTRESS|MISSING\s+(VESSEL|BOAT|PERSON|MIGRANT)|MIGRANT\s+(BOAT|VESSEL)|POB|OVERBOARD|MAYDAY|PAN[\s-]PAN|LIFERAFT|ABANDON|MRCC|JRCC|RCC|COASTGUARD|COAST\s+GUARD|RESCUE\s+(COORDINAT|OPERAT)|MISSING\s+PERSONS?\s+AT\s+SEA/i;
+
+  // GDACS general RSS (proxied via allorigins for CORS)
+  try{
+    const r=await fetchTimeout('https://api.allorigins.win/raw?url='+encodeURIComponent('https://www.gdacs.org/xml/rss.xml'),10000);
+    const txt=await r.text();
+    if(txt.includes('<item>')){
+      const xml=new DOMParser().parseFromString(txt,'text/xml');
+      const items=Array.from(xml.querySelectorAll('item'));
+      for(const item of items){
+        const title=(item.querySelector('title')?.textContent||'').trim();
+        const desc=(item.querySelector('description')?.textContent||'').replace(/<[^>]+>/g,'').trim();
+        if(!SARkw.test(title+' '+desc)) continue;
+        const rawPub=item.querySelector('pubDate')?.textContent||'';
+        const pubMs=new Date(rawPub).getTime();
+        if(pubMs>0 && pubMs<c48) continue; // SAR: 48h only
+        const gp=(item.querySelector('point')?.textContent||'').trim().split(/\s+/).map(Number);
+        const latEl=parseFloat(item.querySelector('lat')?.textContent||gp[0]);
+        const lonEl=parseFloat(item.querySelector('long')?.textContent||gp[1]);
+        const lat=isFinite(latEl)?latEl:null, lon=isFinite(lonEl)?lonEl:null;
+        const pubDate=fmtDate(rawPub);
+        const sarTime=pubDate?`Issued: ${pubDate}`:'Time unknown';
+        let mk=null;
+        if(lat!==null){
+          mk=L.marker([lat,lon],{icon:mkIcon('🆘','#cc0020')}).addTo(map);
+          mk.bindPopup(`<div class="pt">🆘 ${title}</div><div class="pb">${desc.substring(0,400)}</div><div class="pm" style="color:#ff6070;font-weight:700;">🕐 ${sarTime}</div>`);
+        }
+        addCard('list-haz',`<span class="badge dst">DISTRESS</span>`,title,desc,
+          `<span class="dtime">🕐 ${sarTime}</span>`,
+          lat!==null?()=>{fly(lat,lon,6);mk.openPopup();}:null);
+        count++;
+      }
+    }
+  }catch(_){}
+
+  // Salvamento Marítimo (Spain) RSS — covers Atlantic / Canary Islands / Morocco waters
+  try{
+    const r=await fetchTimeout('https://api.allorigins.win/raw?url='+encodeURIComponent('https://www.salvamentomaritimo.es/rss/noticias.xml'),8000);
+    const txt=await r.text();
+    if(txt.includes('<item>')){
+      const xml=new DOMParser().parseFromString(txt,'text/xml');
+      const items=Array.from(xml.querySelectorAll('item'));
+      for(const item of items){
+        const title=(item.querySelector('title')?.textContent||'').trim();
+        const desc=(item.querySelector('description')?.textContent||'').replace(/<[^>]+>/g,'').trim();
+        const rawPub=item.querySelector('pubDate')?.textContent||'';
+        const pubMs=new Date(rawPub).getTime();
+        if(pubMs>0 && pubMs<c48) continue;
+        const c=coord(title+' '+desc);
+        const pubDate=fmtDate(rawPub);
+        const sarTime=pubDate?`Issued: ${pubDate}`:'Time unknown';
+        let mk=null;
+        if(c){
+          mk=L.marker(c,{icon:mkIcon('🆘','#cc0020')}).addTo(map);
+          mk.bindPopup(`<div class="pt">🆘 ${title}</div><div class="pb">${desc.substring(0,400)}</div><div class="pm" style="color:#ff6070;font-weight:700;">🕐 ${sarTime}</div>`);
+        }
+        addCard('list-haz',`<span class="badge dst">SAR</span>`,title,desc,
+          `<span class="dtime">🕐 ${sarTime}</span>`,
+          c?()=>{fly(c[0],c[1],6);mk.openPopup();}:null);
+        count++;
+      }
+    }
+  }catch(_){}
+
+  return count;
+}
+
+
+// ── 6. MARAD MSCI Alerts & Advisories ────────────────────────────────────
+async function loadMARAD(){
+  let count=0;
+  try{
+    const r=await fetchTimeout(MARAD_DATA_URL,12000);
+    if(!r.ok) throw new Error('marad.json status '+r.status);
+    const data=await r.json();
+
+    // Region keyword → map centroid lookup
+    const REGIONS=[
+      {kw:/red\s+sea/i,               lat:20,    lon:38},
+      {kw:/bab\s+el\s+mandeb/i,      lat:12.6,  lon:43.4},
+      {kw:/gulf\s+of\s+aden/i,       lat:12.5,  lon:45},
+      {kw:/arabian\s+sea/i,           lat:15,    lon:65},
+      {kw:/somali\s+(basin|coast)/i,  lat:8,     lon:52},
+      {kw:/persian\s+gulf/i,          lat:26,    lon:52},
+      {kw:/strait\s+of\s+hormuz/i,   lat:26.6,  lon:56.3},
+      {kw:/gulf\s+of\s+oman/i,       lat:23,    lon:58},
+      {kw:/black\s+sea/i,             lat:43.3,  lon:34},
+      {kw:/sea\s+of\s+azov/i,        lat:46,    lon:37},
+      {kw:/gulf\s+of\s+guinea/i,     lat:3,     lon:3},
+      {kw:/indian\s+ocean/i,          lat:10,    lon:75},
+      {kw:/south\s+china\s+sea/i,    lat:15,    lon:114},
+      {kw:/strait\s+of\s+malacca/i,  lat:3,     lon:102},
+      {kw:/east\s+china\s+sea/i,     lat:28,    lon:124},
+      {kw:/yellow\s+sea/i,            lat:35,    lon:122},
+      {kw:/bay\s+of\s+bengal/i,      lat:15,    lon:88},
+      {kw:/andaman\s+sea/i,           lat:12,    lon:96},
+      {kw:/mediterranean/i,            lat:35,    lon:18},
+      {kw:/north\s+sea/i,             lat:56,    lon:3},
+      {kw:/baltic/i,                   lat:58,    lon:20},
+      {kw:/caribbean/i,                lat:15,    lon:-70},
+      {kw:/gulf\s+of\s+mexico/i,     lat:25,    lon:-90},
+      {kw:/coral\s+sea/i,             lat:-18,   lon:152},
+      {kw:/north\s+atlantic/i,        lat:40,    lon:-40},
+      {kw:/north\s+pacific/i,         lat:40,    lon:-160},
+      {kw:/atlantic/i,                 lat:25,    lon:-35},
+      {kw:/pacific/i,                  lat:15,    lon:-150},
+      {kw:/worldwide|global/i,         lat:20,    lon:0},
+    ];
+
+    function getCoords(title){
+      for(const rg of REGIONS) if(rg.kw.test(title)) return [rg.lat,rg.lon];
+      return null;
+    }
+
+    function fmtMARADDate(s){
+      if(!s) return '';
+      const m=s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+      if(m) return fmtDt(new Date(Date.UTC(+m[3],+m[1]-1,+m[2])));
+      return fmtDate(s)||s;
+    }
+
+    function parseMARADTitle(title){
+      // Format: "YYYY-NNN-Location-Description"
+      const m=title.match(/^(\d{4}-\d+)-(.+)$/);
+      if(!m) return {num:'',loc:'',desc:title};
+      const rest=m[2];
+      const dash=rest.indexOf('-');
+      if(dash<0) return {num:m[1],loc:rest,desc:rest};
+      return {num:m[1], loc:rest.substring(0,dash).trim(), desc:rest.substring(dash+1).trim()};
+    }
+
+    const allItems=[
+      ...(data.alerts||[]).map(i=>({...i,type:'alert'})),
+      ...(data.advisories||[]).map(i=>({...i,type:'advisory'}))
+    ];
+
+    if(!allItems.length){
+      document.getElementById('list-marad').innerHTML='<div class="msg">No active MARAD alerts or advisories.</div>';
+      setCount('cnt-marad',0);
+      return 0;
+    }
+    if(document.getElementById('list-marad').querySelector('.msg'))
+      document.getElementById('list-marad').innerHTML='';
+
+    for(const item of allItems){
+      const isAlert=item.type==='alert';
+      const parsed=parseMARADTitle(item.title);
+      const coords=getCoords(item.title);
+      const effDate=fmtMARADDate(item.effective);
+      const expDate=fmtMARADDate(item.expires);
+      const timeLabel=effDate
+        ?'Effective: '+effDate+(expDate?' · Expires: '+expDate:'')
+        :(expDate?'Expires: '+expDate:'');
+      const bCls=isAlert?'marad-alert':'marad-adv';
+      const bLbl=isAlert?'ALERT':'ADVISORY';
+      const mHex=isAlert?'#c00040':'#c05000';
+      const mEmoji=isAlert?'🔴':'🟠';
+      const displayTitle=parsed.num+' — '+parsed.desc;
+      const body=parsed.loc||(isAlert?'See MARAD Alerts':'See MARAD Advisories');
+
+      let mk=null;
+      if(coords){
+        mk=L.marker(coords,{icon:mkIcon(mEmoji,mHex)}).addTo(map);
+        mk.bindPopup(
+          '<div class="pt">'+mEmoji+' '+parsed.desc+'</div>'+
+          '<div class="pb">'+(parsed.loc||'')+(parsed.loc?'\n\n':'')+
+          'Advisory No.: '+parsed.num+'</div>'+
+          (timeLabel?'<div class="pm">🕐 '+timeLabel+'</div>':'')+
+          '<div class="pm"><a href="'+item.url+'" target="_blank" style="color:#60a8c8;">View full advisory →</a></div>'
+        );
+      }
+      addCard('list-marad','<span class="badge '+bCls+'">'+bLbl+'</span>',
+        displayTitle, body, timeLabel||'See MARAD for details',
+        coords?()=>{fly(coords[0],coords[1],4);mk.openPopup();}:null);
+      count++;
+    }
+    setCount('cnt-marad',count);
+    return count;
+  }catch(e){
+    console.warn('MARAD:',e.message);
+    document.getElementById('list-marad').innerHTML='<div class="msg">No active MARAD alerts or advisories.</div>';
+    setCount('cnt-marad',0);
+    return 0;
+  }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────
 async function init(){
   document.getElementById('ts').textContent='Updated '+new Date().toUTCString().replace(' GMT','').slice(0,25)+' UTC';
-  ['list-tc','list-haz','list-gps','list-mil','list-ops','list-gen'].forEach(id=>{document.getElementById(id).innerHTML='<div class="msg">Loading…</div>';});
-  ['cnt-tc','cnt-haz','cnt-gps','cnt-mil','cnt-ops','cnt-gen'].forEach(id=>{document.getElementById(id).textContent='…';});
+  ['list-tc','list-haz','list-gps','list-mil','list-ops','list-sca','list-gen','list-marad'].forEach(id=>{document.getElementById(id).innerHTML='<div class="msg">Loading…</div>';});
+  ['cnt-tc','cnt-haz','cnt-gps','cnt-mil','cnt-ops','cnt-sca','cnt-gen','cnt-marad'].forEach(id=>{document.getElementById(id).textContent='…';});
   map.eachLayer(l=>{if(l instanceof L.Marker) map.removeLayer(l);});
 
-  const [msiN, nwsN, usgsN, tcN]=await Promise.all([loadMSI(),loadNWS(),loadUSGS(),loadNHC()]);
+  const [msiN, nwsN, usgsN, tcN, sarN, maradN]=await Promise.all([loadMSI(),loadNWS(),loadUSGS(),loadNHC(),loadSAR(),loadMARAD()]);
   setCount('cnt-tc',tcN);
   if(tcN===0) document.getElementById('list-tc').innerHTML='<div class="msg">No active tropical cyclones.</div>';
-  document.getElementById('total').textContent=(msiN+nwsN+usgsN+tcN)+' events loaded';
+  document.getElementById('total').textContent=(msiN+nwsN+usgsN+tcN+sarN+maradN)+' events loaded';
 }
 
 init();

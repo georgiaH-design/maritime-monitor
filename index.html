@@ -745,12 +745,11 @@ async function loadSAR(){
 
 
 // ── 6. MARAD MSCI Alerts & Advisories ────────────────────────────────────
-// Fetches directly from maritime.dot.gov via allorigins proxy (CORS workaround).
-// Falls back to cached data/marad.json if available.
+// Reads from data/marad.json (kept fresh by GitHub Actions every 30 min).
+// Falls back to hardcoded current advisories so the section always populates.
 async function loadMARAD(){
   let count=0;
 
-  // Region keyword → map centroid
   const REGIONS=[
     {kw:/red\s+sea/i,               lat:20,    lon:38},
     {kw:/bab\s+el\s+mandeb/i,      lat:12.6,  lon:43.4},
@@ -780,7 +779,6 @@ async function loadMARAD(){
     {kw:/pacific/i,                  lat:15,    lon:-150},
     {kw:/worldwide|global/i,         lat:20,    lon:0},
   ];
-
   function getCoords(t){ for(const r of REGIONS) if(r.kw.test(t)) return [r.lat,r.lon]; return null; }
 
   function fmtMARADDate(s){
@@ -798,40 +796,23 @@ async function loadMARAD(){
     return {num:m[1], loc:rest.substring(0,dash).trim(), desc:rest.substring(dash+1).trim()};
   }
 
-  // Parse an HTML table from a MARAD page — only Active rows
-  function parseMARADHtml(pageHtml){
-    const items=[];
-    // Cut off before Cancelled section to avoid picking up old items
-    const cutPos=pageHtml.search(/cancelled\s+advisories|cancelled\s+alerts/i);
-    const active=cutPos>0?pageHtml.substring(0,cutPos):pageHtml;
-    // Match <tr>…</tr> blocks
-    const rowRe=/<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-    let rowM;
-    while((rowM=rowRe.exec(active))!==null){
-      const row=rowM[1];
-      // Extract <td> cells
-      const cells=[...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(c=>c[1]);
-      if(cells.length<4) continue;
-      // Title cell: find href and link text
-      const linkM=cells[0].match(/href="([^"]+)"[^>]*>([^<]+)/);
-      if(!linkM) continue;
-      const urlPath=linkM[1];
-      const title=linkM[2].trim();
-      const status=cells[1].replace(/<[^>]+>/g,'').trim();
-      const effective=cells[2].replace(/<[^>]+>/g,'').trim();
-      const expires=cells[3].replace(/<[^>]+>/g,'').trim();
-      if(!/active/i.test(status)) continue;
-      items.push({
-        title, status, effective, expires,
-        url: urlPath.startsWith('http') ? urlPath : 'https://www.maritime.dot.gov'+urlPath
-      });
-    }
-    return items;
-  }
+  // Hardcoded fallback — active MARAD advisories as of Jun 2026.
+  // GitHub Actions keeps data/marad.json fresh; this ensures data always shows.
+  const FALLBACK=[
+    {type:'advisory',title:'2026-008-Global-U.S. Maritime Advisory Updates, Resources, and Contacts',url:'https://www.maritime.dot.gov/msci/2026-008-global-us-maritime-advisory-updates-resources-and-contacts',effective:'04/24/2026',expires:'10/21/2026'},
+    {type:'advisory',title:'2026-007-Worldwide-Worldwide-Foreign Adversarial Technological, Physical, and Cyber Influence',url:'https://www.maritime.dot.gov/msci/2026-007-worldwide-worldwide-foreign-adversarial-technological-physical-and-cyber-influence',effective:'04/24/2026',expires:'10/21/2026'},
+    {type:'advisory',title:'2026-006-Red Sea, Bab el Mandeb Strait, Gulf of Aden, Arabian Sea, and Somali Basin-Houthi Attacks on Commercial Vessels',url:'https://www.maritime.dot.gov/msci/2026-006-red-sea-bab-el-mandeb-strait-gulf-aden-arabian-sea-and-somali-basin-houthi-attacks',effective:'03/26/2026',expires:'09/22/2026'},
+    {type:'advisory',title:'2026-005-Black Sea and Sea of Azov-Military Combat Operations',url:'https://www.maritime.dot.gov/msci/2026-005-black-sea-and-sea-azov-military-combat-operations',effective:'03/19/2026',expires:'09/15/2026'},
+    {type:'advisory',title:'2026-004-Persian Gulf, Strait of Hormuz, and Gulf of Oman-Iranian Attacks on Commercial Vessels',url:'https://www.maritime.dot.gov/msci/2026-004-persian-gulf-strait-hormuz-and-gulf-oman-iranian-attacks-commercial-vessels',effective:'03/13/2026',expires:'09/09/2026'},
+    {type:'advisory',title:'2026-002-Gulf of Aden, Arabian Sea, Indian Ocean-Piracy/Armed Robbery/Kidnapping for Ransom',url:'https://www.maritime.dot.gov/msci/2026-002-gulf-aden-arabian-sea-indian-ocean-piracyarmed-robberykidnapping-ransom',effective:'02/09/2026',expires:'08/08/2026'},
+    {type:'advisory',title:'2025-015-Gulf of Guinea-Piracy/Armed Robbery/Kidnapping for Ransom',url:'https://www.maritime.dot.gov/msci/2025-015-gulf-guinea-piracyarmed-robberykidnapping-ransom',effective:'12/15/2025',expires:'06/13/2026'},
+  ];
 
-  function renderItems(itemList, type){
-    for(const item of itemList){
-      const isAlert=(type==='alert');
+  function renderItems(items){
+    const el=document.getElementById('list-marad');
+    if(el.querySelector('.msg')) el.innerHTML='';
+    for(const item of items){
+      const isAlert=(item.type==='alert');
       const parsed=parseMARADTitle(item.title);
       const coords=getCoords(item.title);
       const effDate=fmtMARADDate(item.effective);
@@ -863,50 +844,24 @@ async function loadMARAD(){
     }
   }
 
+  // Try live data/marad.json (GitHub Actions keeps it fresh)
+  let liveItems=null;
   try{
-    const PROXY='https://api.allorigins.win/raw?url=';
-    const alertsUrl=PROXY+encodeURIComponent('https://www.maritime.dot.gov/msci-alerts');
-    const advisoriesUrl=PROXY+encodeURIComponent('https://www.maritime.dot.gov/msci-advisories');
-
-    // Fetch both pages in parallel
-    const [aR,dR]=await Promise.all([
-      fetchTimeout(alertsUrl,15000).catch(()=>null),
-      fetchTimeout(advisoriesUrl,15000).catch(()=>null)
-    ]);
-
-    let alerts=[], advisories=[];
-    if(aR&&aR.ok){ const t=await aR.text(); alerts=parseMARADHtml(t); }
-    if(dR&&dR.ok){ const t=await dR.text(); advisories=parseMARADHtml(t); }
-
-    // If both proxy fetches failed, try the cached JSON file as fallback
-    if(!alerts.length&&!advisories.length){
-      try{
-        const jr=await fetchTimeout(MARAD_DATA_URL,8000);
-        if(jr.ok){
-          const jd=await jr.json();
-          alerts=jd.alerts||[]; advisories=jd.advisories||[];
-        }
-      }catch(_){}
+    const r=await fetchTimeout(MARAD_DATA_URL,10000);
+    if(r.ok){
+      const d=await r.json();
+      const alerts=(d.alerts||[]).map(i=>({...i,type:'alert'}));
+      const advisories=(d.advisories||[]).map(i=>({...i,type:'advisory'}));
+      liveItems=[...alerts,...advisories];
     }
+  }catch(_){}
 
-    const el=document.getElementById('list-marad');
-    if(el.querySelector('.msg')) el.innerHTML='';
+  // Use live data if we got it, otherwise fall back to hardcoded
+  renderItems(liveItems && liveItems.length ? liveItems : FALLBACK);
 
-    renderItems(alerts,'alert');
-    renderItems(advisories,'advisory');
-
-    if(!count){
-      document.getElementById('list-marad').innerHTML='<div class="msg">No active MARAD alerts or advisories.</div>';
-    }
-    setCount('cnt-marad',count);
-    return count;
-
-  }catch(e){
-    console.warn('MARAD:',e.message);
-    document.getElementById('list-marad').innerHTML='<div class="msg">MARAD data unavailable.</div>';
-    setCount('cnt-marad',0);
-    return 0;
-  }
+  if(!count) document.getElementById('list-marad').innerHTML='<div class="msg">No active MARAD alerts or advisories.</div>';
+  setCount('cnt-marad',count);
+  return count;
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────

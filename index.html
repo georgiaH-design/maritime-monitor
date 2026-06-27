@@ -26,7 +26,7 @@
     .sec-hd h2 { font-size:10px; font-weight:700; letter-spacing:1.1px; text-transform:uppercase; color:#4a80a8; }
     .cnt { font-size:10px; background:#0f2035; color:#4a80a8; padding:1px 7px; border-radius:8px; }
     .sec-bd { overflow-y:auto; flex:1; min-height:0; }
-    .sec-bd::-webkit-scrollbar{width:3px} .sec-bd::-webkit-scrollbar-track{background:#091628} .sec-bd::-webkit-scrollbar-thumb{background:#1e3a58;border-radius:2px}
+    .sec-bd::-webkit-scrollbar{width:6px} .sec-bd::-webkit-scrollbar-track{background:#0d1f38} .sec-bd::-webkit-scrollbar-thumb{background:#3a6a9a;border-radius:3px} .sec-bd::-webkit-scrollbar-thumb:hover{background:#5a9acc}
 
     .card { padding:8px 12px; border-bottom:1px solid #0f1e30; cursor:pointer; transition:background .1s; }
     .card:hover { background:#112030; }
@@ -46,6 +46,9 @@
     .wrn { background:#2a1800; color:#d08830; border:1px solid #482800; }
     .nws { background:#1a0028; color:#c080f8; border:1px solid #2a0048; }
     .eq  { background:#1a1400; color:#d0b040; border:1px solid #3a2800; }
+    .mil { background:#2a1800; color:#e09040; border:1px solid #4a2800; }
+    .ops { background:#002030; color:#40b8c8; border:1px solid #004050; }
+    .jam { background:#2a2000; color:#ffe040; border:1px solid #504000; }
 
     .msg { padding:14px 12px; font-size:12px; color:#2e5878; font-style:italic; }
     .src-err { padding:8px 12px; font-size:10px; color:#5a4030; background:#180f00; border-bottom:1px solid #0f1e30; }
@@ -62,7 +65,7 @@
 </head>
 <body>
 <header>
-  <h1>⚓ Maritime Safety Monitor</h1>
+  <h1>⚓ Maritime Safety Monitor <span style="font-size:10px;font-weight:400;color:#5a7a98;letter-spacing:.5px;">— Not for Navigation</span></h1>
   <div class="hdr-r"><span id="ts">—</span><span class="live"><span class="dot"></span>LIVE</span></div>
 </header>
 <div class="layout">
@@ -80,14 +83,29 @@
       <div class="sec-hd"><h2>📡 GPS &amp; Nav Equipment</h2><span class="cnt" id="cnt-gps">—</span></div>
       <div class="sec-bd" id="list-gps"><div class="msg">Loading…</div></div>
     </div>
-    <div class="sec" style="flex:2">
-      <div class="sec-hd"><h2>⚠️ Maritime Warnings</h2><span class="cnt" id="cnt-gen">—</span></div>
+    <div class="sec" style="flex:1.5">
+      <div class="sec-hd" style="background:#1a1600;border-bottom-color:#2a2400;">
+        <h2 style="color:#c8a800;">🛰️ GPS Interference Zones</h2>
+        <span class="cnt" id="cnt-jam" style="background:#1e1800;color:#c8a800;">5</span>
+      </div>
+      <div class="sec-bd" id="list-jam"></div>
+    </div>
+    <div class="sec" style="flex:1">
+      <div class="sec-hd"><h2>🎯 Military &amp; Exercises</h2><span class="cnt" id="cnt-mil">—</span></div>
+      <div class="sec-bd" id="list-mil"><div class="msg">Loading…</div></div>
+    </div>
+    <div class="sec" style="flex:1">
+      <div class="sec-hd"><h2>⚙️ Marine Operations</h2><span class="cnt" id="cnt-ops">—</span></div>
+      <div class="sec-bd" id="list-ops"><div class="msg">Loading…</div></div>
+    </div>
+    <div class="sec" style="flex:1">
+      <div class="sec-hd"><h2>📢 General Notices</h2><span class="cnt" id="cnt-gen">—</span></div>
       <div class="sec-bd" id="list-gen"><div class="msg">Loading…</div></div>
     </div>
   </div>
 </div>
 <footer>
-  <span>Sources: NGA MSI · NOAA NHC · NWS · USGS · GDACS | Situational awareness only — not for navigation</span>
+  <span>Sources: NGA MSI · NOAA NHC · NWS · USGS · GDACS · GPSJam/EASA (interference zones) | Situational awareness only — not for navigation</span>
   <span id="total">Loading…</span>
 </footer>
 
@@ -96,7 +114,8 @@
 (function(){
 'use strict';
 
-const MSI_DATA_URL = './data/msi.json';
+// Path to the MSI data file — served from the same GitHub Pages repo
+const MSI_DATA_URL = 'https://georgiah-design.github.io/maritime-monitor/data/msi.json';
 
 const map = L.map('map',{center:[20,0],zoom:2});
 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
@@ -104,21 +123,95 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
   subdomains:'abcd',maxZoom:18
 }).addTo(map);
 
+// ── Known GPS Interference / Jamming Zones ────────────────────────────────
+// Sources: gpsjam.org FAQ, EASA safety notices, NGA MSI advisories
+// These are semi-permanent conflict-zone jamming areas updated periodically
+const JAM_ZONES = [
+  {
+    id:'baltic', name:'Baltic Sea Region',
+    desc:'Near-constant GPS/GNSS interference attributed to Russian military activity. Affects Finland, Estonia, Latvia, Lithuania, Poland, Sweden and surrounding waters.',
+    level:'HIGH', color:'#ffe040',
+    poly:[[53,14],[65,14],[65,32],[53,32]]
+  },
+  {
+    id:'blacksea', name:'Black Sea / Ukraine War Zone',
+    desc:'Active GPS jamming and spoofing across Ukraine, Crimea, Black Sea, and adjacent waters in Romania and Bulgaria. One of the most consistently affected regions globally.',
+    level:'HIGH', color:'#ffe040',
+    poly:[[43,24],[52,24],[52,41],[43,41]]
+  },
+  {
+    id:'eastmed', name:'Eastern Mediterranean & Middle East',
+    desc:'Large-scale GPS jamming and spoofing affecting Israel, Lebanon, Syria, Cyprus, Iraq, Egypt and surrounding maritime areas. Events are frequent and widespread.',
+    level:'HIGH', color:'#ffe040',
+    poly:[[28,29],[38,29],[38,43],[28,43]]
+  },
+  {
+    id:'gulf', name:'Persian Gulf & Strait of Hormuz',
+    desc:'Persistent GPS interference in the Persian Gulf, Strait of Hormuz and Gulf of Oman. Significant maritime safety concern for vessels transiting this area.',
+    level:'MEDIUM', color:'#ffa030',
+    poly:[[22,48],[30,48],[30,62],[22,62]]
+  },
+  {
+    id:'southasia', name:'South Asia (Pakistan / Myanmar)',
+    desc:'Recurring GPS interference near the Pakistan-India border (Lahore area) and around Yangon, Myanmar, likely related to regional military drone activity.',
+    level:'MEDIUM', color:'#ffa030',
+    poly:[[20,68],[35,68],[35,100],[20,100]]
+  },
+];
+
+const jamLayer = L.layerGroup();
+JAM_ZONES.forEach(z=>{
+  const latlngs=z.poly.map(c=>[c[0],c[1]]);
+  L.polygon(latlngs,{
+    color:z.color, weight:2, opacity:0.8,
+    fillColor:z.color, fillOpacity:0.12,
+    dashArray:'6,4'
+  }).bindPopup(
+    `<div class="pt">🛰️ ${z.name}</div>`+
+    `<div class="pb">${z.desc}</div>`+
+    `<div class="pm">Interference level: <b style="color:${z.color}">${z.level}</b> · Source: GPSJam / EASA advisories</div>`
+  ).addTo(jamLayer);
+  // Zone label at centroid
+  const lats=latlngs.map(c=>c[0]), lons=latlngs.map(c=>c[1]);
+  const cLat=(Math.min(...lats)+Math.max(...lats))/2;
+  const cLon=(Math.min(...lons)+Math.max(...lons))/2;
+  L.marker([cLat,cLon],{
+    icon:L.divIcon({
+      html:`<div style="color:${z.color};font-size:9px;font-weight:700;text-shadow:0 0 4px #000,0 0 4px #000;pointer-events:none;white-space:nowrap;opacity:.8;">🛰 GPS JAM</div>`,
+      className:'',iconSize:[60,14],iconAnchor:[30,7]
+    }),interactive:false
+  }).addTo(jamLayer);
+
+  // Sidebar card
+  const el=document.getElementById('list-jam');
+  const c=document.createElement('div');
+  c.className='card';
+  c.innerHTML=`<div class="ct"><span class="badge jam">${z.level}</span><span class="ctitle">${z.name}</span></div>`+
+    `<div class="cbody">${z.desc.substring(0,120)}…</div>`+
+    `<div class="cft">Tap to zoom map</div>`;
+  c.onclick=()=>{ map.flyToBounds(L.latLngBounds(latlngs),{padding:[40,40],duration:1.2}); };
+  el.appendChild(c);
+});
+jamLayer.addTo(map);
+
+// Timeout-safe fetch using Promise.race
 function fetchTimeout(url, ms) {
+  ms = ms || 10000;
   return Promise.race([
     fetch(url),
-    new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')), ms||10000))
+    new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')), ms))
   ]);
 }
 
 function mkIcon(emoji,hex){
   return L.divIcon({
-    html:`<div style="width:26px;height:26px;background:${hex};border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;border:2px solid rgba(255,255,255,.2);box-shadow:0 0 8px ${hex}88">${emoji}</div>`,
-    className:'',iconSize:[26,26],iconAnchor:[13,13]
+    html:`<div style="width:16px;height:16px;background:${hex};border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:8px;border:1px solid rgba(255,255,255,.2);box-shadow:0 0 5px ${hex}88">${emoji}</div>`,
+    className:'',iconSize:[16,16],iconAnchor:[8,8]
   });
 }
 
 function fly(lat,lon,z){ map.flyTo([lat,lon],z||5,{duration:1.2}); }
+
 function setCount(id,n){ document.getElementById(id).textContent=n; }
 
 function addCard(listId, badgeHtml, title, body, foot, onClickFn){
@@ -141,14 +234,23 @@ function addError(listId, msg){
   el.appendChild(d);
 }
 
+// ── Coordinate extractor for NAVTEX-style text ────────────────────────────
 function coord(text){
-  const p=/(\d{1,3})[°\-](\d{2}(?:\.\d+)?)['']?\s*([NS])[,.\s]+(\d{1,3})[°\-](\d{2}(?:\.\d+)?)['']?\s*([EW])/i;
+  const p=/(\d{1,3})[°\-](\d{2}(?:\.\d+)?)['’]?\s*([NS])[,.\s]+(\d{1,3})[°\-](\d{2}(?:\.\d+)?)['’]?\s*([EW])/i;
   const m=(text||'').match(p);
   if(!m) return null;
   const lat=(parseFloat(m[1])+parseFloat(m[2])/60)*(m[3].toUpperCase()==='S'?-1:1);
   const lon=(parseFloat(m[4])+parseFloat(m[5])/60)*(m[6].toUpperCase()==='W'?-1:1);
   if(isNaN(lat)||isNaN(lon)||lat<-90||lat>90||lon<-180||lon>180) return null;
   return [lat,lon];
+}
+
+// ── NGA MSI keyword classifier ────────────────────────────────────────────
+function classifyGen(text){
+  const t=(text||'').toUpperCase();
+  if(/EXERCISE|FIRING\s+(AREA|PRACTICE|RANGE)|GUNNERY|WEAPONS?\s+(FIRING|TEST|RANGE)|ROCKET|MISSILE|TORPEDO\s+(EXERCISE|FIRING)|BOMBING|NAVAL\s+(EXERCISE|OPERATION|MANEUVER)|MILITARY\s+(EXERCISE|OPERATION)|MINE\s+(CLEAR|SWEEP)|DANGER\s+AREA|RESTRICTED\s+AREA|LIVE\s+(FIRE|AMMUNITION)/.test(t)) return 'mil';
+  if(/CABLE|PIPELINE|SURVEY|SEISMIC|DREDG|DIVING|DRILLING|OFFSHORE\s+(PLATFORM|INSTALLATION|CONSTRUCT|WORK)|CONSTRUCTION|TOWING|BARGE|RESEARCH\s+VESSEL|OCEANOGRAPH|SAR|SEARCH\s+AND\s+RESCUE|VESSEL\s+IN\s+DISTRESS|PERSON\s+OVERBOARD|HYDROGRAPH/.test(t)) return 'ops';
+  return 'gen';
 }
 
 function classify(text){
@@ -158,15 +260,18 @@ function classify(text){
   return 'general';
 }
 
+// ── 1. NGA MSI via Cloudflare Worker ─────────────────────────────────────
 async function loadMSI(){
-  let haz=0, gps=0, gen=0;
+  let haz=0, gps=0, mil=0, ops=0, gen=0;
   try {
     const r=await fetchTimeout(MSI_DATA_URL, 12000);
     if(!r.ok) throw new Error('Could not load msi.json (status '+r.status+')');
     const data=await r.json();
     if(data.error) throw new Error(data.error);
+
     const items=data['broadcast-warn']||[];
     if(!items.length) throw new Error('No items in response');
+
     items.forEach(w=>{
       const text=(w.text||'').trim();
       const navA=w.navArea?`NAVAREA ${w.navArea}`:'';
@@ -176,65 +281,110 @@ async function loadMSI(){
       const date=w.issueDate?new Date(w.issueDate).toUTCString().slice(0,16)+' UTC':'';
       const c=coord(text);
       const cat=classify(text);
+
       let listId,bCls,bLbl,mEmoji,mHex;
-      if(cat==='gps'){       listId='list-gps'; bCls='gps'; bLbl='GPS/NAV'; mEmoji='📡'; mHex='#008090'; gps++; }
-      else if(cat==='hazard'){listId='list-haz'; bCls='haz'; bLbl='HAZARD';  mEmoji='🚨'; mHex='#b03000'; haz++; }
-      else{                   listId='list-gen'; bCls='wrn'; bLbl='NAVWARN'; mEmoji='⚠️'; mHex='#806010'; gen++; }
+      if(cat==='gps'){      listId='list-gps'; bCls='gps'; bLbl='GPS/NAV';  mEmoji='📡'; mHex='#008090'; gps++; }
+      else if(cat==='hazard'){listId='list-haz'; bCls='haz'; bLbl='HAZARD';   mEmoji='🚨'; mHex='#b03000'; haz++; }
+      else{
+        const sub=classifyGen(text);
+        if(sub==='mil'){      listId='list-mil'; bCls='mil'; bLbl='MILITARY'; mEmoji='🎯'; mHex='#207040'; mil++; }
+        else if(sub==='ops'){ listId='list-ops'; bCls='ops'; bLbl='OPS';      mEmoji='⚙️'; mHex='#005060'; ops++; }
+        else{                 listId='list-gen'; bCls='wrn'; bLbl='NAVWARN';  mEmoji='⚠️'; mHex='#806010'; gen++; }
+      }
+
       let mk=null;
-      if(c){ mk=L.marker(c,{icon:mkIcon(mEmoji,mHex)}).addTo(map); mk.bindPopup(`<div class="pt">${mEmoji} ${title}</div><div class="pb">${text.substring(0,500)}${text.length>500?'…':''}</div>${date?`<div class="pm">Issued: ${date}</div>`:''}`); }
+      if(c){
+        mk=L.marker(c,{icon:mkIcon(mEmoji,mHex)}).addTo(map);
+        mk.bindPopup(`<div class="pt">${mEmoji} ${title}</div><div class="pb">${text.substring(0,500)}${text.length>500?'…':''}</div>${date?`<div class="pm">Issued: ${date}</div>`:''}`);
+      }
       addCard(listId,`<span class="badge ${bCls}">${bLbl}</span>`,title,text,date,c?()=>{fly(c[0],c[1],6);mk.openPopup();}:null);
     });
-    setCount('cnt-haz',haz); setCount('cnt-gps',gps); setCount('cnt-gen',gen);
-    ['list-haz','list-gps','list-gen'].forEach(id=>{ if(document.getElementById(id).querySelector('.msg')) document.getElementById(id).innerHTML='<div class="msg">No active warnings in this category.</div>'; });
+
+    setCount('cnt-haz',haz); setCount('cnt-gps',gps); setCount('cnt-mil',mil); setCount('cnt-ops',ops); setCount('cnt-gen',gen);
+    ['list-haz','list-gps','list-mil','list-ops','list-gen'].forEach(id=>{
+      if(document.getElementById(id).querySelector('.msg'))
+        document.getElementById(id).innerHTML='<div class="msg">No active warnings in this category.</div>';
+    });
     return haz+gps+gen;
+
   } catch(e){
     console.warn('MSI:',e.message);
-    ['list-haz','list-gps','list-gen'].forEach(id=>addError(id,'NGA MSI: '+e.message));
-    setCount('cnt-haz','!'); setCount('cnt-gps','!'); setCount('cnt-gen','!');
+    ['list-haz','list-gps','list-mil','list-ops','list-gen'].forEach(id=>addError(id,'NGA MSI: '+e.message));
+    setCount('cnt-haz','!'); setCount('cnt-gps','!'); setCount('cnt-mil','!'); setCount('cnt-ops','!'); setCount('cnt-gen','!');
     return 0;
   }
 }
 
+// ── 2. NWS Marine Alerts (US coastal waters — direct CORS) ───────────────
+// Marine zones: PZ=Pacific, AM=W.Atlantic, AN=N.Atlantic, GM=Gulf of Mexico
+// LS/LM/LH/LC/LE/LO = Great Lakes
 async function loadNWS(){
   let count=0;
   try {
     const zones='PZ,PH,PK,AM,AN,GM,LS,LM,LH,LC,LE,LO';
-    const r=await fetchTimeout(`https://api.weather.gov/alerts/active?status=actual&area=${zones}`,10000);
+    const r=await fetchTimeout(`https://api.weather.gov/alerts/active?status=actual&area=${zones}`, 10000);
     const data=await r.json();
-    const priority=['Tsunami Warning','Tsunami Watch','Tsunami Advisory','Special Marine Warning','Gale Warning','Storm Warning','Hurricane Warning','Tropical Storm Warning','Marine Weather Statement','Hazardous Seas','Dense Fog Advisory','Small Craft Advisory'];
-    const filtered=(data.features||[]).filter(f=>priority.includes(f.properties.event));
+    const alerts=(data.features||[]);
+
+    // Only show genuine marine hazards (not routine advisories)
+    const priority=['Tsunami Warning','Tsunami Watch','Tsunami Advisory',
+      'Special Marine Warning','Gale Warning','Storm Warning','Hurricane Warning',
+      'Tropical Storm Warning','Marine Weather Statement','Hazardous Seas',
+      'Dense Fog Advisory','Small Craft Advisory'];
+
+    const filtered=alerts.filter(f=>priority.includes(f.properties.event));
+
     filtered.forEach(f=>{
       const p=f.properties;
       const event=p.event||'Marine Alert';
       const area=p.areaDesc||'';
       const desc=(p.description||p.headline||'').trim();
       const expires=p.expires?new Date(p.expires).toUTCString().slice(0,16)+' UTC':'';
+
       const isTsunami=/tsunami/i.test(event);
       const isGale=/gale|storm\s+warning|hurricane|tropical/i.test(event);
+      const isFog=/fog|visibility/i.test(event);
       const bCls=isTsunami?'red':isGale?'haz':'nws';
       const bLbl=isTsunami?'TSUNAMI':isGale?'GALE/STORM':'MARINE';
       const mHex=isTsunami?'#c00020':isGale?'#b04000':'#7000b0';
       const mEmoji=isTsunami?'🌊':isGale?'🌬️':'📋';
+
+      // Geometry: NWS returns polygon or point
       let lat=null,lon=null;
       const geo=f.geometry;
       if(geo){
-        if(geo.type==='Point'){lon=geo.coordinates[0];lat=geo.coordinates[1];}
+        if(geo.type==='Point'){ lon=geo.coordinates[0]; lat=geo.coordinates[1]; }
         else if(geo.type==='Polygon'||geo.type==='MultiPolygon'){
+          // Use centroid of first ring
           const ring=geo.type==='Polygon'?geo.coordinates[0]:geo.coordinates[0][0];
-          lat=ring.map(c=>c[1]).reduce((a,b)=>a+b,0)/ring.length;
-          lon=ring.map(c=>c[0]).reduce((a,b)=>a+b,0)/ring.length;
+          const lats=ring.map(c=>c[1]), lons=ring.map(c=>c[0]);
+          lat=lats.reduce((a,b)=>a+b,0)/lats.length;
+          lon=lons.reduce((a,b)=>a+b,0)/lons.length;
         }
       }
+
       let mk=null;
       const listId=isTsunami||isGale?'list-haz':'list-gen';
-      if(lat!==null){mk=L.marker([lat,lon],{icon:mkIcon(mEmoji,mHex)}).addTo(map);mk.bindPopup(`<div class="pt">${mEmoji} ${event}</div><div class="pb">${area}\n\n${desc.substring(0,400)}</div>${expires?`<div class="pm">Expires: ${expires}</div>`:''}`); }
+      if(lat!==null){
+        mk=L.marker([lat,lon],{icon:mkIcon(mEmoji,mHex)}).addTo(map);
+        mk.bindPopup(`<div class="pt">${mEmoji} ${event}</div><div class="pb">${area}\n\n${desc.substring(0,400)}</div>${expires?`<div class="pm">Expires: ${expires}</div>`:''}`);
+      }
       addCard(listId,`<span class="badge ${bCls}">${bLbl}</span>`,`${event} — ${area}`,desc,expires,lat!==null?()=>{fly(lat,lon,5);mk.openPopup();}:null);
       count++;
     });
+
+    // Add to hazard/general counts
+    setCount('cnt-haz', (parseInt(document.getElementById('cnt-haz').textContent)||0)+
+      filtered.filter(f=>/tsunami|gale|storm\s+warning|hurricane/i.test(f.properties.event)).length);
     return count;
-  } catch(e){ console.warn('NWS:',e.message); addError('list-gen','NWS: '+e.message); return 0; }
+  } catch(e){
+    console.warn('NWS:',e.message);
+    addError('list-gen','NWS Marine Alerts: '+e.message);
+    return 0;
+  }
 }
 
+// ── 3. USGS Earthquakes M5.0+ (direct CORS — tsunami/seismic hazard) ─────
 async function loadUSGS(){
   let count=0;
   try {
@@ -243,24 +393,34 @@ async function loadUSGS(){
     (data.features||[]).forEach(f=>{
       const p=f.properties;
       const mag=p.mag?.toFixed(1)||'?';
-      const place=p.place||'Unknown';
+      const place=p.place||'Unknown location';
       const title=`M${mag} — ${place}`;
       const alert=p.alert||'';
       const time=new Date(p.time).toUTCString().slice(0,16)+' UTC';
       const coords=f.geometry?.coordinates;
-      const lat=coords?.[1],lon=coords?.[0];
+      const lat=coords?.[1], lon=coords?.[0];
+
       const bCls=p.mag>=7?'red':p.mag>=6?'org':'eq';
       const severity=p.mag>=7?'MAJOR EQ':p.mag>=6?'STRONG EQ':'EQ';
+
       let mk=null;
-      if(lat!==undefined){mk=L.marker([lat,lon],{icon:mkIcon('🌊',p.mag>=7?'#c00020':p.mag>=6?'#b05000':'#806800')}).addTo(map);mk.bindPopup(`<div class="pt">🌊 ${title}</div><div class="pb">Magnitude: ${mag}\nDepth: ${(coords[2]||0).toFixed(0)} km</div><div class="pm">Tsunami alert: ${alert||'none'} · ${time}</div>`);}
+      if(lat!==undefined){
+        mk=L.marker([lat,lon],{icon:mkIcon('🌊',p.mag>=7?'#c00020':p.mag>=6?'#b05000':'#806800')}).addTo(map);
+        mk.bindPopup(`<div class="pt">🌊 ${title}</div><div class="pb">Magnitude: ${mag}\nDepth: ${(coords[2]||0).toFixed(0)} km</div><div class="pm">Tsunami alert: ${alert||'none'} · ${time}</div>`);
+      }
       addCard('list-haz',`<span class="badge ${bCls}">${severity}</span>`,title,`Depth: ${(coords?.[2]||0).toFixed(0)} km · Tsunami: ${alert||'no alert'}`,time,lat!==undefined?()=>{fly(lat,lon,6);mk.openPopup();}:null);
       count++;
     });
     setCount('cnt-haz',(parseInt(document.getElementById('cnt-haz').textContent)||0)+count);
     return count;
-  } catch(e){ console.warn('USGS:',e.message); addError('list-haz','USGS: '+e.message); return 0; }
+  } catch(e){
+    console.warn('USGS:',e.message);
+    addError('list-haz','USGS Earthquakes: '+e.message);
+    return 0;
+  }
 }
 
+// ── 4. Tropical Cyclones — NHC RSS (direct CORS) ─────────────────────────
 async function loadNHC(){
   let count=0;
   const feeds=['https://www.nhc.noaa.gov/index-at.xml','https://www.nhc.noaa.gov/index-ep.xml','https://www.nhc.noaa.gov/index-cp.xml'];
@@ -269,36 +429,41 @@ async function loadNHC(){
       const r=await fetchTimeout(url,8000);
       const txt=await r.text();
       const xml=new DOMParser().parseFromString(txt,'text/xml');
-      for(const item of Array.from(xml.querySelectorAll('item'))){
+      const items=Array.from(xml.querySelectorAll('item'));
+      for(const item of items){
         const title=item.querySelector('title')?.textContent||'';
         if(!/(tropical\s+(storm|depression|cyclone)|hurricane|typhoon)/i.test(title)) continue;
         const desc=(item.querySelector('description')?.textContent||'').replace(/<[^>]+>/g,'').trim();
-        const latV=parseFloat(item.querySelector('lat')?.textContent||'');
-        const lonV=parseFloat(item.querySelector('long')?.textContent||'');
-        const lat=isFinite(latV)?latV:null,lon=isFinite(lonV)?lonV:null;
+        const latEl=parseFloat(item.querySelector('lat')?.textContent||'');
+        const lonEl=parseFloat(item.querySelector('long')?.textContent||'');
+        const lat=isFinite(latEl)?latEl:null, lon=isFinite(lonEl)?lonEl:null;
         const isHurr=/hurricane/i.test(title);
+        const bCls=isHurr?'red':'org'; const bLbl=isHurr?'HURRICANE':'T.STORM';
         let mk=null;
-        if(lat!==null){mk=L.marker([lat,lon],{icon:mkIcon('🌀',isHurr?'#b00030':'#a05000')}).addTo(map);mk.bindPopup(`<div class="pt">🌀 ${title}</div><div class="pb">${desc.substring(0,400)}</div>`);}
-        addCard('list-tc',`<span class="badge tc">TC</span><span class="badge ${isHurr?'red':'org'}">${isHurr?'HURRICANE':'T.STORM'}</span>`,title,desc,'',lat!==null?()=>{fly(lat,lon,5);mk.openPopup();}:null);
+        if(lat!==null){ mk=L.marker([lat,lon],{icon:mkIcon('🌀',isHurr?'#b00030':'#a05000')}).addTo(map); mk.bindPopup(`<div class="pt">🌀 ${title}</div><div class="pb">${desc.substring(0,400)}</div>`); }
+        addCard('list-tc',`<span class="badge tc">TC</span><span class="badge ${bCls}">${bLbl}</span>`,title,desc,'',lat!==null?()=>{fly(lat,lon,5);mk.openPopup();}:null);
         count++;
       }
     }catch(_){}
   }
+  // Also try GDACS TC RSS via allorigins
   try{
     const r=await fetchTimeout('https://api.allorigins.win/raw?url='+encodeURIComponent('https://www.gdacs.org/xml/rss_tc.xml'),10000);
     const txt=await r.text();
     if(txt.includes('<item>')){
       const xml=new DOMParser().parseFromString(txt,'text/xml');
-      for(const item of Array.from(xml.querySelectorAll('item'))){
+      const items=Array.from(xml.querySelectorAll('item'));
+      for(const item of items){
         const title=item.querySelector('title')?.textContent||'Cyclone';
         const desc=(item.querySelector('description')?.textContent||'').replace(/<[^>]+>/g,'').trim();
         const gp=(item.querySelector('point')?.textContent||'').trim().split(/\s+/).map(Number);
-        const lat=isFinite(gp[0])?gp[0]:null,lon=isFinite(gp[1])?gp[1]:null;
+        const lat=isFinite(gp[0])?gp[0]:null, lon=isFinite(gp[1])?gp[1]:null;
         const alert=(item.querySelector('alertlevel')?.textContent||'').toLowerCase();
         const bCls=alert==='red'?'red':alert==='orange'?'org':'grn';
+        const bLbl=(alert||'active').toUpperCase();
         let mk=null;
-        if(lat!==null){mk=L.marker([lat,lon],{icon:mkIcon('🌀',alert==='red'?'#b00030':'#500090')}).addTo(map);mk.bindPopup(`<div class="pt">🌀 ${title}</div><div class="pb">${desc.substring(0,400)}</div>`);}
-        addCard('list-tc',`<span class="badge tc">TC</span><span class="badge ${bCls}">${(alert||'active').toUpperCase()}</span>`,title,desc,'',lat!==null?()=>{fly(lat,lon,5);mk.openPopup();}:null);
+        if(lat!==null){ mk=L.marker([lat,lon],{icon:mkIcon('🌀',alert==='red'?'#b00030':'#500090')}).addTo(map); mk.bindPopup(`<div class="pt">🌀 ${title}</div><div class="pb">${desc.substring(0,400)}</div>`); }
+        addCard('list-tc',`<span class="badge tc">TC</span><span class="badge ${bCls}">${bLbl}</span>`,title,desc,'',lat!==null?()=>{fly(lat,lon,5);mk.openPopup();}:null);
         count++;
       }
     }
@@ -306,19 +471,21 @@ async function loadNHC(){
   return count;
 }
 
+// ── Init ──────────────────────────────────────────────────────────────────
 async function init(){
   document.getElementById('ts').textContent='Updated '+new Date().toUTCString().replace(' GMT','').slice(0,25)+' UTC';
-  ['list-tc','list-haz','list-gps','list-gen'].forEach(id=>{document.getElementById(id).innerHTML='<div class="msg">Loading…</div>';});
-  ['cnt-tc','cnt-haz','cnt-gps','cnt-gen'].forEach(id=>{document.getElementById(id).textContent='…';});
+  ['list-tc','list-haz','list-gps','list-mil','list-ops','list-gen'].forEach(id=>{document.getElementById(id).innerHTML='<div class="msg">Loading…</div>';});
+  ['cnt-tc','cnt-haz','cnt-gps','cnt-mil','cnt-ops','cnt-gen'].forEach(id=>{document.getElementById(id).textContent='…';});
   map.eachLayer(l=>{if(l instanceof L.Marker) map.removeLayer(l);});
-  const [msiN,nwsN,usgsN,tcN]=await Promise.all([loadMSI(),loadNWS(),loadUSGS(),loadNHC()]);
+
+  const [msiN, nwsN, usgsN, tcN]=await Promise.all([loadMSI(),loadNWS(),loadUSGS(),loadNHC()]);
   setCount('cnt-tc',tcN);
   if(tcN===0) document.getElementById('list-tc').innerHTML='<div class="msg">No active tropical cyclones.</div>';
   document.getElementById('total').textContent=(msiN+nwsN+usgsN+tcN)+' events loaded';
 }
 
 init();
-setInterval(init,10*60*1000);
+setInterval(init, 10*60*1000);
 
 })();
 </script>

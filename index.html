@@ -745,83 +745,93 @@ async function loadSAR(){
 
 
 // ── 6. MARAD MSCI Alerts & Advisories ────────────────────────────────────
+// Fetches directly from maritime.dot.gov via allorigins proxy (CORS workaround).
+// Falls back to cached data/marad.json if available.
 async function loadMARAD(){
   let count=0;
-  try{
-    const r=await fetchTimeout(MARAD_DATA_URL,12000);
-    if(!r.ok) throw new Error('marad.json status '+r.status);
-    const data=await r.json();
 
-    // Region keyword → map centroid lookup
-    const REGIONS=[
-      {kw:/red\s+sea/i,               lat:20,    lon:38},
-      {kw:/bab\s+el\s+mandeb/i,      lat:12.6,  lon:43.4},
-      {kw:/gulf\s+of\s+aden/i,       lat:12.5,  lon:45},
-      {kw:/arabian\s+sea/i,           lat:15,    lon:65},
-      {kw:/somali\s+(basin|coast)/i,  lat:8,     lon:52},
-      {kw:/persian\s+gulf/i,          lat:26,    lon:52},
-      {kw:/strait\s+of\s+hormuz/i,   lat:26.6,  lon:56.3},
-      {kw:/gulf\s+of\s+oman/i,       lat:23,    lon:58},
-      {kw:/black\s+sea/i,             lat:43.3,  lon:34},
-      {kw:/sea\s+of\s+azov/i,        lat:46,    lon:37},
-      {kw:/gulf\s+of\s+guinea/i,     lat:3,     lon:3},
-      {kw:/indian\s+ocean/i,          lat:10,    lon:75},
-      {kw:/south\s+china\s+sea/i,    lat:15,    lon:114},
-      {kw:/strait\s+of\s+malacca/i,  lat:3,     lon:102},
-      {kw:/east\s+china\s+sea/i,     lat:28,    lon:124},
-      {kw:/yellow\s+sea/i,            lat:35,    lon:122},
-      {kw:/bay\s+of\s+bengal/i,      lat:15,    lon:88},
-      {kw:/andaman\s+sea/i,           lat:12,    lon:96},
-      {kw:/mediterranean/i,            lat:35,    lon:18},
-      {kw:/north\s+sea/i,             lat:56,    lon:3},
-      {kw:/baltic/i,                   lat:58,    lon:20},
-      {kw:/caribbean/i,                lat:15,    lon:-70},
-      {kw:/gulf\s+of\s+mexico/i,     lat:25,    lon:-90},
-      {kw:/coral\s+sea/i,             lat:-18,   lon:152},
-      {kw:/north\s+atlantic/i,        lat:40,    lon:-40},
-      {kw:/north\s+pacific/i,         lat:40,    lon:-160},
-      {kw:/atlantic/i,                 lat:25,    lon:-35},
-      {kw:/pacific/i,                  lat:15,    lon:-150},
-      {kw:/worldwide|global/i,         lat:20,    lon:0},
-    ];
+  // Region keyword → map centroid
+  const REGIONS=[
+    {kw:/red\s+sea/i,               lat:20,    lon:38},
+    {kw:/bab\s+el\s+mandeb/i,      lat:12.6,  lon:43.4},
+    {kw:/gulf\s+of\s+aden/i,       lat:12.5,  lon:45},
+    {kw:/arabian\s+sea/i,           lat:15,    lon:65},
+    {kw:/somali\s+(basin|coast)/i,  lat:8,     lon:52},
+    {kw:/persian\s+gulf/i,          lat:26,    lon:52},
+    {kw:/strait\s+of\s+hormuz/i,   lat:26.6,  lon:56.3},
+    {kw:/gulf\s+of\s+oman/i,       lat:23,    lon:58},
+    {kw:/black\s+sea/i,             lat:43.3,  lon:34},
+    {kw:/sea\s+of\s+azov/i,        lat:46,    lon:37},
+    {kw:/gulf\s+of\s+guinea/i,     lat:3,     lon:3},
+    {kw:/indian\s+ocean/i,          lat:10,    lon:75},
+    {kw:/south\s+china\s+sea/i,    lat:15,    lon:114},
+    {kw:/strait\s+of\s+malacca/i,  lat:3,     lon:102},
+    {kw:/east\s+china\s+sea/i,     lat:28,    lon:124},
+    {kw:/yellow\s+sea/i,            lat:35,    lon:122},
+    {kw:/bay\s+of\s+bengal/i,      lat:15,    lon:88},
+    {kw:/andaman\s+sea/i,           lat:12,    lon:96},
+    {kw:/mediterranean/i,            lat:35,    lon:18},
+    {kw:/north\s+sea/i,             lat:56,    lon:3},
+    {kw:/baltic/i,                   lat:58,    lon:20},
+    {kw:/caribbean/i,                lat:15,    lon:-70},
+    {kw:/gulf\s+of\s+mexico/i,     lat:25,    lon:-90},
+    {kw:/coral\s+sea/i,             lat:-18,   lon:152},
+    {kw:/atlantic/i,                 lat:25,    lon:-35},
+    {kw:/pacific/i,                  lat:15,    lon:-150},
+    {kw:/worldwide|global/i,         lat:20,    lon:0},
+  ];
 
-    function getCoords(title){
-      for(const rg of REGIONS) if(rg.kw.test(title)) return [rg.lat,rg.lon];
-      return null;
+  function getCoords(t){ for(const r of REGIONS) if(r.kw.test(t)) return [r.lat,r.lon]; return null; }
+
+  function fmtMARADDate(s){
+    if(!s) return '';
+    const m=s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if(m) return fmtDt(new Date(Date.UTC(+m[3],+m[1]-1,+m[2])));
+    return fmtDate(s)||s;
+  }
+
+  function parseMARADTitle(title){
+    const m=title.match(/^(\d{4}-\d+)-(.+)$/);
+    if(!m) return {num:'',loc:'',desc:title};
+    const rest=m[2], dash=rest.indexOf('-');
+    if(dash<0) return {num:m[1],loc:rest,desc:rest};
+    return {num:m[1], loc:rest.substring(0,dash).trim(), desc:rest.substring(dash+1).trim()};
+  }
+
+  // Parse an HTML table from a MARAD page — only Active rows
+  function parseMARADHtml(pageHtml){
+    const items=[];
+    // Cut off before Cancelled section to avoid picking up old items
+    const cutPos=pageHtml.search(/cancelled\s+advisories|cancelled\s+alerts/i);
+    const active=cutPos>0?pageHtml.substring(0,cutPos):pageHtml;
+    // Match <tr>…</tr> blocks
+    const rowRe=/<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+    let rowM;
+    while((rowM=rowRe.exec(active))!==null){
+      const row=rowM[1];
+      // Extract <td> cells
+      const cells=[...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(c=>c[1]);
+      if(cells.length<4) continue;
+      // Title cell: find href and link text
+      const linkM=cells[0].match(/href="([^"]+)"[^>]*>([^<]+)/);
+      if(!linkM) continue;
+      const urlPath=linkM[1];
+      const title=linkM[2].trim();
+      const status=cells[1].replace(/<[^>]+>/g,'').trim();
+      const effective=cells[2].replace(/<[^>]+>/g,'').trim();
+      const expires=cells[3].replace(/<[^>]+>/g,'').trim();
+      if(!/active/i.test(status)) continue;
+      items.push({
+        title, status, effective, expires,
+        url: urlPath.startsWith('http') ? urlPath : 'https://www.maritime.dot.gov'+urlPath
+      });
     }
+    return items;
+  }
 
-    function fmtMARADDate(s){
-      if(!s) return '';
-      const m=s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-      if(m) return fmtDt(new Date(Date.UTC(+m[3],+m[1]-1,+m[2])));
-      return fmtDate(s)||s;
-    }
-
-    function parseMARADTitle(title){
-      // Format: "YYYY-NNN-Location-Description"
-      const m=title.match(/^(\d{4}-\d+)-(.+)$/);
-      if(!m) return {num:'',loc:'',desc:title};
-      const rest=m[2];
-      const dash=rest.indexOf('-');
-      if(dash<0) return {num:m[1],loc:rest,desc:rest};
-      return {num:m[1], loc:rest.substring(0,dash).trim(), desc:rest.substring(dash+1).trim()};
-    }
-
-    const allItems=[
-      ...(data.alerts||[]).map(i=>({...i,type:'alert'})),
-      ...(data.advisories||[]).map(i=>({...i,type:'advisory'}))
-    ];
-
-    if(!allItems.length){
-      document.getElementById('list-marad').innerHTML='<div class="msg">No active MARAD alerts or advisories.</div>';
-      setCount('cnt-marad',0);
-      return 0;
-    }
-    if(document.getElementById('list-marad').querySelector('.msg'))
-      document.getElementById('list-marad').innerHTML='';
-
-    for(const item of allItems){
-      const isAlert=item.type==='alert';
+  function renderItems(itemList, type){
+    for(const item of itemList){
+      const isAlert=(type==='alert');
       const parsed=parseMARADTitle(item.title);
       const coords=getCoords(item.title);
       const effDate=fmtMARADDate(item.effective);
@@ -835,13 +845,12 @@ async function loadMARAD(){
       const mEmoji=isAlert?'🔴':'🟠';
       const displayTitle=parsed.num+' — '+parsed.desc;
       const body=parsed.loc||(isAlert?'See MARAD Alerts':'See MARAD Advisories');
-
       let mk=null;
       if(coords){
         mk=L.marker(coords,{icon:mkIcon(mEmoji,mHex)}).addTo(map);
         mk.bindPopup(
           '<div class="pt">'+mEmoji+' '+parsed.desc+'</div>'+
-          '<div class="pb">'+(parsed.loc||'')+(parsed.loc?'\n\n':'')+
+          '<div class="pb">'+(parsed.loc?parsed.loc+'\n\n':'')+
           'Advisory No.: '+parsed.num+'</div>'+
           (timeLabel?'<div class="pm">🕐 '+timeLabel+'</div>':'')+
           '<div class="pm"><a href="'+item.url+'" target="_blank" style="color:#60a8c8;">View full advisory →</a></div>'
@@ -852,11 +861,49 @@ async function loadMARAD(){
         coords?()=>{fly(coords[0],coords[1],4);mk.openPopup();}:null);
       count++;
     }
+  }
+
+  try{
+    const PROXY='https://api.allorigins.win/raw?url=';
+    const alertsUrl=PROXY+encodeURIComponent('https://www.maritime.dot.gov/msci-alerts');
+    const advisoriesUrl=PROXY+encodeURIComponent('https://www.maritime.dot.gov/msci-advisories');
+
+    // Fetch both pages in parallel
+    const [aR,dR]=await Promise.all([
+      fetchTimeout(alertsUrl,15000).catch(()=>null),
+      fetchTimeout(advisoriesUrl,15000).catch(()=>null)
+    ]);
+
+    let alerts=[], advisories=[];
+    if(aR&&aR.ok){ const t=await aR.text(); alerts=parseMARADHtml(t); }
+    if(dR&&dR.ok){ const t=await dR.text(); advisories=parseMARADHtml(t); }
+
+    // If both proxy fetches failed, try the cached JSON file as fallback
+    if(!alerts.length&&!advisories.length){
+      try{
+        const jr=await fetchTimeout(MARAD_DATA_URL,8000);
+        if(jr.ok){
+          const jd=await jr.json();
+          alerts=jd.alerts||[]; advisories=jd.advisories||[];
+        }
+      }catch(_){}
+    }
+
+    const el=document.getElementById('list-marad');
+    if(el.querySelector('.msg')) el.innerHTML='';
+
+    renderItems(alerts,'alert');
+    renderItems(advisories,'advisory');
+
+    if(!count){
+      document.getElementById('list-marad').innerHTML='<div class="msg">No active MARAD alerts or advisories.</div>';
+    }
     setCount('cnt-marad',count);
     return count;
+
   }catch(e){
     console.warn('MARAD:',e.message);
-    document.getElementById('list-marad').innerHTML='<div class="msg">No active MARAD alerts or advisories.</div>';
+    document.getElementById('list-marad').innerHTML='<div class="msg">MARAD data unavailable.</div>';
     setCount('cnt-marad',0);
     return 0;
   }

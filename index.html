@@ -138,9 +138,16 @@ const MSI_DATA_URL  = 'https://georgiah-design.github.io/maritime-monitor/data/m
 const MARAD_DATA_URL = 'https://georgiah-design.github.io/maritime-monitor/data/marad.json';
 
 const map = L.map('map',{center:[20,0],zoom:2});
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
-  attribution:'© <a href="https://openstreetmap.org">OSM</a> © <a href="https://carto.com">CARTO</a>',
-  subdomains:'abcd',maxZoom:18
+// NOTE: CARTO retired keyless basemaps (late Aug 2026); basemaps.cartocdn.com now
+// returns an "API KEY REQUIRED" watermark. Esri Dark Gray Canvas is a free, no-key
+// dark basemap with the same look. (Esri tile order is {z}/{y}/{x}, not {z}/{x}/{y}.)
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',{
+  attribution:'Tiles © <a href="https://www.esri.com">Esri</a>',
+  maxZoom:16
+}).addTo(map);
+// Place-name labels (also keyless). Delete these 3 lines if you want an unlabeled map.
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',{
+  maxZoom:16
 }).addTo(map);
 
 // ── Known GPS Interference / Jamming Zones ────────────────────────────────
